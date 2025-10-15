@@ -13,11 +13,17 @@ jobs:
     name: Deploy
     steps:
       - uses: actions/checkout@v4
+      
       - uses: pnpm/action-setup@v2
         with:
-          version: 10
+          version: 8 # Usando uma versão estável do pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
-          wranglerVersion: "3.111.0"
+          # A versão do Wrangler pode ser especificada se necessário
+          # wranglerVersion: "3.11.0"

@@ -12,18 +12,21 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy
     steps:
+      # 1. Baixa o código do seu repositório para o ambiente de execução
       - uses: actions/checkout@v4
       
-      - uses: pnpm/action-setup@v2
+      # 2. Instala a ferramenta pnpm versão 9, que é compatível com o seu lockfile
+      - uses: pnpm/action-setup@v4
         with:
-          version: 8 # Usando uma versão estável do pnpm
+          version: 9
 
+      # 3. Lê o pnpm-lock.yaml e instala as dependências exatas
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 4. Com as dependências instaladas, executa o deploy com o Wrangler
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
-          # A versão do Wrangler pode ser especificada se necessário
-          # wranglerVersion: "3.11.0"
+          # wranglerVersion: "3.111.0" # A versão já está no seu lockfile, então não é estritamente necessário aqui

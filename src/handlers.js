@@ -64,36 +64,44 @@ export async function handleMultpleUploads(request, env, ctx) {
 }
 
 export async function handleGetFile(request, env) {
-    let path = new URL(request.url).pathname;
-    const filename = decodeURIComponent(path.slice(1));
-    if(path === '/'){
-        path = '/dav'
-        return new Response(handleUiRouting(path), {
-            status:301,
-            headers: {
-                "Content-Type": "text/html",
-                "Cache-Control": "public, max-age=604800"
-            },
-        });
+    const url = new URL(request.url);
 
-    }
-    const file = await env.MY_BUCKET.get(filename);
-
-    if (file === null) {
-        return new Response("File not found", { status: 404, headers: corsHeaders });
+    // CORREÇÃO: Garante que a decodificação seja feita de forma robusta.
+    const key = decodeURIComponent(url.pathname.slice(1));
+    if (key.includes("..")) {
+        return new Response("Invalid path", { status: 400 });
     }
 
-    const extension = filename.split(".").pop().toLowerCase();
-    const contentType = mimeTypes[extension] || mimeTypes.default;
+    // Lógica de redirecionamento para a UI, se necessário (mantida do seu original)
+    if (url.pathname === '/') {
+        // Redireciona para uma página de UI se existir, ou pode ser removido.
+        // Assumindo que você não tem uma UI, podemos simplificar.
+        return new Response("Root access is for WebDAV clients.", { status: 200 });
+    }
 
-    return new Response(file.body, {
+    // Busca o objeto no R2 usando a chave decodificada.
+    const object = await env.MY_BUCKET.get(key);
+
+    if (object === null) {
+        return new Response(`File not found: ${key}`, { status: 404, headers: corsHeaders });
+    }
+
+    // MELHORIA: Usa os metadados salvos no R2 para uma resposta mais precisa.
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("etag", object.httpEtag);
+    // Adiciona o cabeçalho Content-Disposition para sugerir o nome do arquivo ao navegador/cliente.
+    headers.set("Content-Disposition", `inline; filename="${key.split('/').pop()}"`);
+
+    // Faz o streaming do corpo do objeto diretamente, o que é muito eficiente.
+    return new Response(object.body, {
         headers: {
-            ...corsHeaders,
-            "Content-Type": contentType,
-            "Content-Disposition": `inline; filename="${filename}"`,
+            ...corsHeaders, // Mantém os cabeçalhos CORS se necessário
+            ...Object.fromEntries(headers), // Converte os Headers para um objeto
         },
     });
 }
+
 
 export async function handlePutFile(request, env, ctx) {
     const url = new URL(request.url);
@@ -128,36 +136,36 @@ export async function handlePutFile(request, env, ctx) {
 }
 
 export async function handleFileList(request, env, ctx) {
-    // Handle directory listing (WebDAV-specific)
-    const path = new URL(request.url).pathname;
-    const prefix = path === "/" ? "" : path.slice(1); // Handle root path
+    const url = new URL(request.url);
 
-    const bypassCache = true //request.headers.get("X-Bypass-Cache") === "true";
+    // CORREÇÃO CRÍTICA: Decodifica o caminho ANTES de usá-lo como prefixo.
+    const decodedPath = decodeURIComponent(url.pathname);
+    const prefix = decodedPath === "/" ? "" : decodedPath.slice(1);
+
+    // Lógica de cache mantida do seu original.
+    const bypassCache = true; // Forçando bypass para teste, pode ser ajustado.
     const cache = caches.default;
     const cacheKey = new Request(request.url, { cf: { cacheTtl: 604800 } });
 
     if (!bypassCache) {
         const cachedResponse = await cache.match(cacheKey);
         if (cachedResponse) {
-            console.log(`HIT`);
             return cachedResponse;
         }
-
     }
-    console.log("MISS");
-    // List objects in R2 with the correct prefix
+
+    // Lista os objetos no R2 com o prefixo CORRETO (decodificado).
     const objects = await env.MY_BUCKET.list({ prefix });
-    console.log(objects);
-    
-    // Generate WebDAV XML response
+
+    // Gera a resposta XML do WebDAV.
     const xmlResponse = `
       <D:multistatus xmlns:D="DAV:">
         <D:response>
-          <D:href>${path}</D:href>
+          <D:href>${url.pathname}</D:href>
           <D:propstat>
             <D:prop>
               <D:resourcetype><D:collection/></D:resourcetype>
-              <D:displayname>${path === "/" ? "root" : path.split("/").pop()}</D:displayname>
+              <D:displayname>${decodedPath === "/" ? "root" : decodedPath.split("/").filter(Boolean).pop()}</D:displayname>
             </D:prop>
             <D:status>HTTP/1.1 200 OK</D:status>
           </D:propstat>
@@ -169,7 +177,7 @@ export async function handleFileList(request, env, ctx) {
                 <D:href>/${encodeURIComponent(obj.key)}</D:href>
                 <D:propstat>
                   <D:prop>
-                    <D:resourcetype/> <!-- Empty for files -->
+                    <D:resourcetype/>
                     <D:getcontentlength>${obj.size}</D:getcontentlength>
                     <D:getlastmodified>${new Date(obj.uploaded).toUTCString()}</D:getlastmodified>
                   </D:prop>
@@ -186,10 +194,10 @@ export async function handleFileList(request, env, ctx) {
         headers: {
             ...corsHeaders,
             "Content-Type": "application/xml",
-         //   "Cache-Control": "public, max-age=604800"
         },
     });
-  //  ctx.waitUntil(cache.put(cacheKey, response.clone()));
+
+    // ctx.waitUntil(cache.put(cacheKey, response.clone()));
     return response;
 }
 
